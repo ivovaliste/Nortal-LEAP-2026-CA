@@ -21,63 +21,83 @@ public class LibraryService {
     this.memberRepository = memberRepository;
   }
 
-    public Result borrowBook(String bookId, String memberId) {
-        Optional<Book> book = bookRepository.findById(bookId);
-        if (book.isEmpty()) {
-            return Result.failure("BOOK_NOT_FOUND");
-        }
-        if (!memberRepository.existsById(memberId)) {
-            return Result.failure("MEMBER_NOT_FOUND");
-        }
-        if (!canMemberBorrow(memberId)) {
-            return Result.failure("BORROW_LIMIT");
-        }
-
-        Book entity = book.get();
-
-        if (entity.getLoanedTo() != null) {
-            return Result.failure("BOOK_LOANED");
-        }
-
-        List<String> queue = entity.getReservationQueue();
-        if (queue != null && !queue.isEmpty()) {
-            String head = queue.getFirst();
-            if (!memberId.equals(head)) {
-                return Result.failure("QUEUE_EXISTS");
-            }
-            queue.removeFirst();
-        }
-
-        entity.setLoanedTo(memberId);
-        entity.setDueDate(LocalDate.now().plusDays(DEFAULT_LOAN_DAYS));
-        bookRepository.save(entity);
-        return Result.success();
+  public Result borrowBook(String bookId, String memberId) {
+    Optional<Book> book = bookRepository.findById(bookId);
+    if (book.isEmpty()) {
+      return Result.failure("BOOK_NOT_FOUND");
+    }
+    if (!memberRepository.existsById(memberId)) {
+      return Result.failure("MEMBER_NOT_FOUND");
+    }
+    if (!canMemberBorrow(memberId)) {
+      return Result.failure("BORROW_LIMIT");
     }
 
-    public ResultWithNext returnBook(String bookId, String memberId) {
-        Optional<Book> book = bookRepository.findById(bookId);
-        if (book.isEmpty()) {
-            return ResultWithNext.failure();
-        }
+    Book entity = book.get();
 
-        Book entity = book.get();
-
-        if (entity.getLoanedTo() == null) {
-            return ResultWithNext.failure();
-        }
-        if (memberId == null || !memberId.equals(entity.getLoanedTo())) {
-            return ResultWithNext.failure();
-        }
-
-        entity.setLoanedTo(null);
-        entity.setDueDate(null);
-
-        String nextMember =
-                entity.getReservationQueue().isEmpty() ? null : entity.getReservationQueue().getFirst();
-
-        bookRepository.save(entity);
-        return ResultWithNext.success(nextMember);
+    if (entity.getLoanedTo() != null) {
+      return Result.failure("BOOK_LOANED");
     }
+
+    List<String> queue = entity.getReservationQueue();
+    if (queue != null && !queue.isEmpty()) {
+      String head = queue.getFirst();
+      if (!memberId.equals(head)) {
+        return Result.failure("QUEUE_EXISTS");
+      }
+      queue.removeFirst();
+    }
+
+    entity.setLoanedTo(memberId);
+    entity.setDueDate(LocalDate.now().plusDays(DEFAULT_LOAN_DAYS));
+    bookRepository.save(entity);
+    return Result.success();
+  }
+
+  public ResultWithNext returnBook(String bookId, String memberId) {
+    Optional<Book> book = bookRepository.findById(bookId);
+    if (book.isEmpty()) {
+      return ResultWithNext.failure();
+    }
+
+    Book entity = book.get();
+
+    if (entity.getLoanedTo() == null) {
+      return ResultWithNext.failure();
+    }
+    if (memberId == null || !memberId.equals(entity.getLoanedTo())) {
+      return ResultWithNext.failure();
+    }
+
+    entity.setLoanedTo(null);
+    entity.setDueDate(null);
+
+    String handedTo = null;
+    List<String> queue = entity.getReservationQueue();
+
+    while (queue != null && !queue.isEmpty()) {
+      String candidate = queue.getFirst();
+
+      if (!memberRepository.existsById(candidate)) {
+        queue.removeFirst();
+        continue;
+      }
+
+      if (!canMemberBorrow(candidate)) {
+        queue.removeFirst();
+        continue;
+      }
+
+      queue.removeFirst();
+      entity.setLoanedTo(candidate);
+      entity.setDueDate(LocalDate.now().plusDays(DEFAULT_LOAN_DAYS));
+      handedTo = candidate;
+      break;
+    }
+
+    bookRepository.save(entity);
+    return ResultWithNext.success(handedTo);
+  }
 
   public Result reserveBook(String bookId, String memberId) {
     Optional<Book> book = bookRepository.findById(bookId);
@@ -89,6 +109,35 @@ public class LibraryService {
     }
 
     Book entity = book.get();
+
+    if (memberId.equals(entity.getLoanedTo())) {
+      return Result.failure("ALREADY_LOANED");
+    }
+
+    List<String> queue = entity.getReservationQueue();
+
+    if (queue != null && queue.contains(memberId)) {
+      return Result.failure("ALREADY_RESERVED");
+    }
+
+    if (entity.getLoanedTo() == null) {
+      if (!canMemberBorrow(memberId)) {
+        return Result.failure("BORROW_LIMIT");
+      }
+
+      if (queue != null && !queue.isEmpty()) {
+        if (!memberId.equals(queue.getFirst())) {
+          return Result.failure("QUEUE_EXISTS");
+        }
+        queue.removeFirst();
+      }
+
+      entity.setLoanedTo(memberId);
+      entity.setDueDate(LocalDate.now().plusDays(DEFAULT_LOAN_DAYS));
+      bookRepository.save(entity);
+      return Result.success();
+    }
+
     entity.getReservationQueue().add(memberId);
     bookRepository.save(entity);
     return Result.success();
@@ -113,16 +162,14 @@ public class LibraryService {
   }
 
   public boolean canMemberBorrow(String memberId) {
-    if (!memberRepository.existsById(memberId)) {
-      return false;
-    }
-    int active = 0;
-    for (Book book : bookRepository.findAll()) {
-      if (memberId.equals(book.getLoanedTo())) {
-        active++;
+
+    int loans = 0;
+    for (Book b : bookRepository.findAll()) {
+      if (memberId.equals(b.getLoanedTo()) && ++loans >= MAX_LOANS) {
+        return false;
       }
     }
-    return active < MAX_LOANS;
+    return true;
   }
 
   public List<Book> searchBooks(String titleContains, Boolean availableOnly, String loanedTo) {
@@ -132,10 +179,7 @@ public class LibraryService {
                 titleContains == null
                     || b.getTitle().toLowerCase().contains(titleContains.toLowerCase()))
         .filter(b -> loanedTo == null || loanedTo.equals(b.getLoanedTo()))
-        .filter(
-            b ->
-                availableOnly == null
-                    || (availableOnly == (b.getLoanedTo() == null)))
+        .filter(b -> availableOnly == null || (availableOnly == (b.getLoanedTo() == null)))
         .toList();
   }
 
