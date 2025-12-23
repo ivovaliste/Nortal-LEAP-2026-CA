@@ -21,127 +21,99 @@ public class LibraryService {
     this.memberRepository = memberRepository;
   }
 
-  public Result borrowBook(String bookId, String memberId) {
-    Optional<Book> book = bookRepository.findById(bookId);
-    if (book.isEmpty()) {
-      return Result.failure("BOOK_NOT_FOUND");
-    }
-    if (!memberRepository.existsById(memberId)) {
-      return Result.failure("MEMBER_NOT_FOUND");
-    }
-    if (!canMemberBorrow(memberId)) {
-      return Result.failure("BORROW_LIMIT");
-    }
+    public Result borrowBook(String bookId, String memberId) {
+        Optional<Book> book = bookRepository.findById(bookId);
+        if (book.isEmpty()) return Result.failure("BOOK_NOT_FOUND");
+        if (!memberRepository.existsById(memberId)) return Result.failure("MEMBER_NOT_FOUND");
+        if (!canMemberBorrow(memberId)) return Result.failure("BORROW_LIMIT");
 
-    Book entity = book.get();
+        Book entity = book.get();
 
-    if (entity.getLoanedTo() != null) {
-      return Result.failure("BOOK_LOANED");
-    }
+        if (entity.getLoanedTo() != null) return Result.failure("BOOK_LOANED");
 
-    List<String> queue = entity.getReservationQueue();
-    if (queue != null && !queue.isEmpty()) {
-      String head = queue.getFirst();
-      if (!memberId.equals(head)) {
-        return Result.failure("QUEUE_EXISTS");
-      }
-      queue.removeFirst();
-    }
-
-    entity.setLoanedTo(memberId);
-    entity.setDueDate(LocalDate.now().plusDays(DEFAULT_LOAN_DAYS));
-    bookRepository.save(entity);
-    return Result.success();
-  }
-
-  public ResultWithNext returnBook(String bookId, String memberId) {
-    Optional<Book> book = bookRepository.findById(bookId);
-    if (book.isEmpty()) {
-      return ResultWithNext.failure();
-    }
-
-    Book entity = book.get();
-
-    if (entity.getLoanedTo() == null) {
-      return ResultWithNext.failure();
-    }
-    if (memberId == null || !memberId.equals(entity.getLoanedTo())) {
-      return ResultWithNext.failure();
-    }
-
-    entity.setLoanedTo(null);
-    entity.setDueDate(null);
-
-    String handedTo = null;
-    List<String> queue = entity.getReservationQueue();
-
-    while (queue != null && !queue.isEmpty()) {
-      String candidate = queue.getFirst();
-
-      if (!memberRepository.existsById(candidate)) {
-        queue.removeFirst();
-        continue;
-      }
-
-      if (!canMemberBorrow(candidate)) {
-        queue.removeFirst();
-        continue;
-      }
-
-      queue.removeFirst();
-      entity.setLoanedTo(candidate);
-      entity.setDueDate(LocalDate.now().plusDays(DEFAULT_LOAN_DAYS));
-      handedTo = candidate;
-      break;
-    }
-
-    bookRepository.save(entity);
-    return ResultWithNext.success(handedTo);
-  }
-
-  public Result reserveBook(String bookId, String memberId) {
-    Optional<Book> book = bookRepository.findById(bookId);
-    if (book.isEmpty()) {
-      return Result.failure("BOOK_NOT_FOUND");
-    }
-    if (!memberRepository.existsById(memberId)) {
-      return Result.failure("MEMBER_NOT_FOUND");
-    }
-
-    Book entity = book.get();
-
-    if (memberId.equals(entity.getLoanedTo())) {
-      return Result.failure("ALREADY_LOANED");
-    }
-
-    List<String> queue = entity.getReservationQueue();
-
-    if (queue != null && queue.contains(memberId)) {
-      return Result.failure("ALREADY_RESERVED");
-    }
-
-    if (entity.getLoanedTo() == null) {
-      if (!canMemberBorrow(memberId)) {
-        return Result.failure("BORROW_LIMIT");
-      }
-
-      if (queue != null && !queue.isEmpty()) {
-        if (!memberId.equals(queue.getFirst())) {
-          return Result.failure("QUEUE_EXISTS");
+        List<String> queue = entity.getReservationQueue();
+        if (!queue.isEmpty()) {
+            String head = queue.getFirst();
+            if (!memberId.equals(head)) return Result.failure("QUEUE_EXISTS");
+            queue.removeFirst();
         }
-        queue.removeFirst();
-      }
 
-      entity.setLoanedTo(memberId);
-      entity.setDueDate(LocalDate.now().plusDays(DEFAULT_LOAN_DAYS));
-      bookRepository.save(entity);
-      return Result.success();
+        entity.setLoanedTo(memberId);
+        entity.setDueDate(LocalDate.now().plusDays(DEFAULT_LOAN_DAYS));
+        bookRepository.save(entity);
+        return Result.success();
     }
 
-    entity.getReservationQueue().add(memberId);
-    bookRepository.save(entity);
-    return Result.success();
-  }
+    public ResultWithNext returnBook(String bookId, String memberId) {
+        Optional<Book> book = bookRepository.findById(bookId);
+        if (book.isEmpty()) return ResultWithNext.failure();
+
+        Book entity = book.get();
+
+        if (entity.getLoanedTo() == null) return ResultWithNext.failure();
+        if (memberId == null || !memberId.equals(entity.getLoanedTo())) return ResultWithNext.failure();
+
+        entity.setLoanedTo(null);
+        entity.setDueDate(null);
+
+        String handedTo = null;
+        List<String> queue = entity.getReservationQueue();
+
+        while (!queue.isEmpty()) {
+            String candidate = queue.getFirst();
+
+            if (!memberRepository.existsById(candidate)) {
+                queue.removeFirst();
+                continue;
+            }
+
+            if (!canMemberBorrow(candidate)) {
+                queue.removeFirst();
+                continue;
+            }
+
+            queue.removeFirst();
+            entity.setLoanedTo(candidate);
+            entity.setDueDate(LocalDate.now().plusDays(DEFAULT_LOAN_DAYS));
+            handedTo = candidate;
+            break;
+        }
+
+        bookRepository.save(entity);
+        return ResultWithNext.success(handedTo);
+    }
+
+    public Result reserveBook(String bookId, String memberId) {
+        Optional<Book> book = bookRepository.findById(bookId);
+        if (book.isEmpty()) return Result.failure("BOOK_NOT_FOUND");
+        if (!memberRepository.existsById(memberId)) return Result.failure("MEMBER_NOT_FOUND");
+
+        Book entity = book.get();
+
+        if (memberId.equals(entity.getLoanedTo())) return Result.failure("ALREADY_LOANED");
+
+        List<String> queue = entity.getReservationQueue();
+
+        if (queue.contains(memberId)) return Result.failure("ALREADY_RESERVED");
+
+        if (entity.getLoanedTo() == null) {
+            if (!canMemberBorrow(memberId)) return Result.failure("BORROW_LIMIT");
+
+            if (!queue.isEmpty()) {
+                if (!memberId.equals(queue.getFirst())) return Result.failure("QUEUE_EXISTS");
+                queue.removeFirst();
+            }
+
+            entity.setLoanedTo(memberId);
+            entity.setDueDate(LocalDate.now().plusDays(DEFAULT_LOAN_DAYS));
+            bookRepository.save(entity);
+            return Result.success();
+        }
+
+        queue.add(memberId);
+        bookRepository.save(entity);
+        return Result.success();
+    }
 
   public Result cancelReservation(String bookId, String memberId) {
     Optional<Book> book = bookRepository.findById(bookId);
